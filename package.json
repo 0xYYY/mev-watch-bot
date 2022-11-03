@@ -1,0 +1,36 @@
+{
+    "name": "mevwatch-twitter-bot",
+    "version": "0.0.1",
+    "description": "Daily twitter post on the status of Ethereum OFAC-compliant blocks extracted from www.mevwatch.info.",
+    "main": "build/src/index.js",
+    "author": "0xYYY@protonmail.com",
+    "license": "MIT",
+    "devDependencies": {
+        "@playwright/test": "^1.27.1",
+        "@trivago/prettier-plugin-sort-imports": "^3.3.1",
+        "@types/node": "^14.11.2",
+        "@typescript-eslint/eslint-plugin": "^5.40.0",
+        "@typescript-eslint/parser": "^5.40.0",
+        "eslint": "^8.25.0",
+        "eslint-config-prettier": "^8.5.0",
+        "prettier": "2.7.1",
+        "typescript": "^4.8.4"
+    },
+    "dependencies": {
+        "@google-cloud/functions-framework": "^3.1.2",
+        "@google-cloud/pubsub": "^3.2.0",
+        "@sparticuz/chromium": "^107.0.0",
+        "axios": "^1.1.3",
+        "playwright-core": "1.27.1",
+        "prompt": "^1.3.0",
+        "twitter-api-v2": "^1.12.8"
+    },
+    "scripts": {
+        "clean": "rm -rf build",
+        "lint": "yarn eslint --fix --ext .ts src/ && yarn prettier --write src/",
+        "build": "tsc",
+        "auth": "yarn build && node build/src/auth.js",
+        "deploy": "yarn build && bash scripts/deploy.sh",
+        "trigger": "gcloud pubsub topics publish noon --attribute=mevwatch=true"
+    }
+}
