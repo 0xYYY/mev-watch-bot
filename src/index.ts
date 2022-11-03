@@ -2,14 +2,16 @@ import { Context, EventFunction } from "@google-cloud/functions-framework/build/
 import { PubsubMessage } from "@google-cloud/pubsub/build/src/publisher";
 import { TwitterApi, EUploadMimeType } from "twitter-api-v2";
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { chromium: playwright } = require("playwright-core");
+// eslint-disable-next-line @typescript-eslint/no-var-requires
 const chromium = require("@sparticuz/chromium");
 
 const axios = require("axios"); // eslint-disable-line @typescript-eslint/no-var-requires
 
-// TODO: cleanup
-// TODO: add logs
+const MEVWATCH_URL = "https://www.mevwatch.info";
 
+// Log util.
 function log(severity: string, message: string) {
     const entry = Object.assign({
         severity: severity.toUpperCase(),
@@ -23,7 +25,7 @@ interface Snapshot {
     currentRate: number;
 }
 
-// Obtain mevwatch.info screenshot and current OFAC rate.
+// Obtain website screenshot and current rate.
 async function getSnapshot(): Promise<Snapshot> {
     // Construct headless browser.
     const browser = await playwright.launch({
@@ -36,13 +38,13 @@ async function getSnapshot(): Promise<Snapshot> {
 
     // Obtain screenshot.
     await page.setViewportSize({ width: 900, height: 700 });
-    await page.goto("https://www.mevwatch.info");
+    await page.goto(MEVWATCH_URL);
     // NOTE: Wait for canvas animation to complete. Should have more reliable way, e.g. other
     // `waitForXXX` methods.
     await page.waitForTimeout(3000);
     const screenshot = await page.screenshot();
 
-    // Obtain current OFAC rate.
+    // Obtain current rate.
     const text = await page.locator('p:has-text("OFAC compliance")').nth(0).innerText();
     const currentRate = Number(text.replace(/(\d+)%.*/, "$1"));
     await browser.close();
@@ -50,11 +52,13 @@ async function getSnapshot(): Promise<Snapshot> {
     return { screenshot: screenshot, currentRate: currentRate };
 }
 
-// Get historical OFAC rate.
+// Get historical rates.
 async function getHistoricalRates(): Promise<Record<string, number>> {
     const stats: Record<number, { total: number; ofac: number }> = {};
-    const response = await axios.get("https://www.mevwatch.info/api/blockStatsAggregated");
+    const response = await axios.get(`${MEVWATCH_URL}/api/blockStatsAggregated`);
     const data = response.data.relayStats;
+
+    // Aggregate data based on record date.
     for (const d of data) {
         const date = new Date(d.date).toDateString();
         if (date in stats) {
@@ -68,6 +72,7 @@ async function getHistoricalRates(): Promise<Record<string, number>> {
         }
     }
 
+    // Calculate rate for each day.
     const rates: Record<string, number> = {};
     for (const k in stats) {
         rates[k] = Math.round((stats[k].ofac / stats[k].total) * 100);
@@ -76,15 +81,16 @@ async function getHistoricalRates(): Promise<Record<string, number>> {
     return rates;
 }
 
+// Calculate rate change.
 function calChange(
     currentRate: number,
     historicalRates: Record<string, number>,
-    n: number
+    days: number
 ): string {
     const now = new Date();
-    const past = new Date(now.getTime() - n * 86400 * 1000).toDateString();
+    const past = new Date(now.getTime() - days * 86400 * 1000).toDateString();
     if (!(past in historicalRates)) {
-        log("WARN", `Historical stats for ${past} not available.`);
+        log("warn", `Historical stats for ${past} not available.`);
         return "N/A";
     }
     const change = Math.round(currentRate - historicalRates[past]);
@@ -113,30 +119,52 @@ async function postTweet(text: string, screenshot: Buffer) {
 }
 
 export const handlePubSub: EventFunction = async (message: PubsubMessage, _context: Context) => {
+    // Only trigger when message contains certain attribute.
+    const data = message.attributes || {};
+    if (!("mevwatch" in data)) {
+        return;
+    }
+
+    // Get screenshot and current rate.
+    let snapshot: Snapshot;
     try {
-        // Only trigger when message contains certain attribute.
-        const data = message.attributes || {};
-        if (!("mevwatch" in data)) {
-            return;
-        }
+        snapshot = await getSnapshot();
+    } catch (e) {
+        log("error", `Failed to get snapshot from mevwatch.info: ${e}`);
+        return;
+    }
+    const { screenshot, currentRate } = snapshot;
+    log("info", `Successfully get snapshot from ${MEVWATCH_URL}.`);
 
-        const { screenshot, currentRate }: Snapshot = await getSnapshot();
+    // Calculate rate change in past 7d/30d.
+    let historicalRates: Record<string, number>;
+    try {
+        historicalRates = await getHistoricalRates();
+    } catch (e) {
+        log("error", `Failed to get historical rates from mevwatch.info: ${e}`);
+        return;
+    }
+    const weekChange = calChange(currentRate, historicalRates, 7);
+    const monthChange = calChange(currentRate, historicalRates, 30);
+    log(
+        "info",
+        `Current rate: ${currentRate}, 7d change: ${weekChange}, 30d change: ${monthChange}.`
+    );
 
-        const historicalRates = await getHistoricalRates();
-
-        const weekChange = calChange(currentRate, historicalRates, 7);
-        const monthChange = calChange(currentRate, historicalRates, 30);
-
-        const text = `🫥 Ethereum OFAC-Compliant Block Rate
+    // Tweet out.
+    const text = `🫥 Ethereum OFAC-Compliant Block Rate
 
 Current: ${currentRate}%\n
 
 7d change: ${weekChange}
 30d change: ${monthChange}
 
-See more stats on www.mevwatch.info`;
+See more stats on ${MEVWATCH_URL}`;
+    try {
         await postTweet(text, screenshot);
-    } catch (err) {
-        console.log(err);
+    } catch (e) {
+        log("error", `Failed to tweet: ${e}`);
+        return;
     }
+    log("info", "Successfully sent out tweet.");
 };
