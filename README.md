@@ -73,4 +73,4 @@ Absolutely welcome. Also feel free to reach out to discuss the project or anythi
 
 ## License
 
-[MIT](./LICENSE)
+Dual licensed under either [MIT License](./LICENSE-MIT) or [Apache License, Version 2.0](./LICENSE-APACHE).
