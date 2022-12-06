@@ -37,8 +37,10 @@ async function getSnapshot(): Promise<Snapshot> {
     const page = await context.newPage();
 
     // Obtain screenshot.
-    await page.setViewportSize({ width: 900, height: 700 });
+    await page.setViewportSize({ width: 900, height: 600 });
     await page.goto(MEVWATCH_URL);
+    // Scroll to the "Trend" section.
+    await page.mouse.wheel(0, 1850);
     // NOTE: Wait for canvas animation to complete. Should have more reliable way, e.g. other
     // `waitForXXX` methods.
     await page.waitForTimeout(3000);
